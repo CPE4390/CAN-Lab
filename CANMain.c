@@ -23,7 +23,6 @@ void ConfigSystem(void);
 char WriteCANMsg(int msgID, void *data, unsigned char dataLen, unsigned char priority);
 int ReadPot(void);
 
-char lcdStr[17] = "Running";
 volatile char buttonPressed = 0;
 volatile unsigned int msgCount = 0;
 volatile char update;
@@ -36,14 +35,12 @@ void main(void) {
     ConfigSystem();
     ConfigCAN();
     LCDInit();
-    LCDWriteLine(lcdStr, 0);
+    lprintf(0, "CAN Lab");
     INTCONbits.PEIE = 1;
     INTCONbits.GIE = 1;
     while (1) {
         if (update) {
-            sprintf(lcdStr, "ID=%03x Data=%d", id, *((int *)data));
-            LCDClearLine(1);
-            LCDWriteLine(lcdStr, 1);
+            lprintf(1, "ID=%03x Data=%d", id, *((int *)data));
             update = 0;
         }
     }
@@ -164,7 +161,7 @@ int ReadPot(void) {
     return result;
 }
 
-void interrupt HighISR(void) {
+void __interrupt(high_priority) HighISR(void) {
     int i;
     if (INTCONbits.INT0IF) {
         __delay_ms(10);
