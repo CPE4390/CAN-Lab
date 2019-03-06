@@ -1,7 +1,4 @@
 
-// PIC18F66K80 Configuration Bit Settings
-
-
 #include <xc.h>
 
 #pragma config WDTEN = OFF
@@ -20,7 +17,7 @@
 void ConfigPins(void);
 void ConfigCAN(void);
 void ConfigSystem(void);
-char WriteCANMsg(int msgID, void *data, unsigned char dataLen, unsigned char priority);
+char WriteCANMsg(int msgID, int data);
 int ReadPot(void);
 
 volatile char buttonPressed = 0;
@@ -28,7 +25,7 @@ volatile unsigned int msgCount = 0;
 volatile char update;
 volatile unsigned int id;
 volatile unsigned char len;
-volatile unsigned char data[8];
+volatile int data;
 
 void main(void) {
     ConfigPins();
@@ -40,7 +37,7 @@ void main(void) {
     INTCONbits.GIE = 1;
     while (1) {
         if (update) {
-            lprintf(1, "ID=%03x Data=%d", id, *((int *)data));
+            lprintf(1, "ID=%03x Data=%d", id, data);
             update = 0;
         }
     }
@@ -65,8 +62,8 @@ void ConfigCAN(void) {
     BRGCON1bits.BRP = 15; //TQ = 1us
     BRGCON1bits.SJW = 0;
     BRGCON2bits.SEG2PHTS = 1; //Don't assign phase 2 automatically
-    BRGCON2bits.SEG1PH = 3;  //Phase 1 = 4TQ
     BRGCON2bits.PRSEG = 0; //Propagation = 1 TQ 
+    BRGCON2bits.SEG1PH = 3;  //Phase 1 = 4TQ
     BRGCON3bits.SEG2PH = 1; //Phase 2 = 2 TQ
 
     //Set up Mask and filters for RB0
@@ -118,19 +115,15 @@ void ConfigCAN(void) {
     PIE5bits.RXB0IE = 1; //Enable RXB0 interrupt
 }
 
-char WriteCANMsg(int msgID, void *data, unsigned char dataLen, unsigned char priority) {
-    char i;
+char WriteCANMsg(int msgID, int data) {
     if (TXB0CONbits.TXREQ == 0) {
-        TXB0CONbits.TXPRI = priority;
-        TXB0SIDH = msgID >> 3;
-        TXB0SIDLbits.SID = (msgID & 0b111);
-        TXB0SIDLbits.EXIDE = 0;
-        TXB0DLC = dataLen & 0b1111;
-        for (i = 0; i < dataLen; ++i) {
-            //Use pointers to access the data and the data sfr's as arrays of bytes
-            ((unsigned char*) &TXB0D0)[i] = ((unsigned char *) data)[i];
-        }
-        TXB0CONbits.TXREQ = 1;
+        TXB0SIDH = msgID >> 3; //Upper 8 bits of ID
+        TXB0SIDLbits.SID = (msgID); //lower 3 bits of ID
+        TXB0SIDLbits.EXIDE = 0;  //Standard ID
+        TXB0DLC = 2;  //our data is an int which is 2 bytes long
+        TXB0D0 = data; //low byte of data
+        TXB0D1 = data >> 8; //high byte of data
+        TXB0CONbits.TXREQ = 1;  //Request transmission
         return 1;
     }
     return 0;
@@ -161,7 +154,6 @@ int ReadPot(void) {
 }
 
 void __interrupt(high_priority) HighISR(void) {
-    int i;
     if (INTCONbits.INT0IF) {
         __delay_ms(10);
         if (!buttonPressed) {
@@ -169,9 +161,9 @@ void __interrupt(high_priority) HighISR(void) {
             LATDbits.LATD0 = ~LATDbits.LATD0;
             ++msgCount;
             switch (msgCount % 2) {
-                case 1: WriteCANMsg(MSG1_ID, (void *) &msgCount, sizeof (msgCount), 0);
+                case 1: WriteCANMsg(MSG1_ID, msgCount);
                     break;
-                case 0: WriteCANMsg(MSG2_ID, (void *) &msgCount, sizeof (msgCount), 0);
+                case 0: WriteCANMsg(MSG2_ID, msgCount);
                     break;
             }
         } else {
@@ -180,17 +172,15 @@ void __interrupt(high_priority) HighISR(void) {
         INTCON2bits.INTEDG0 = ~INTCON2bits.INTEDG0;
         INTCONbits.INT0IF = 0;
     } else if (PIR5bits.RXB0IF) {
-        id = RXB0SIDH;
-        id <<= 3;
-        id |= RXB0SIDLbits.SID;
-        len = RXB0DLC & 0b1111;
-        for (i = 0; i < len; ++i) {
-            //use a pointer to the first data byte sfr so we can access the data
-            //as an array of char
-            data[i] = ((unsigned char *) &RXB0D0)[i];  
-        }
-        update = 1;
-        RXB0CONbits.RXFUL = 0;
-        PIR5bits.RXB0IF = 0;
+        id = RXB0SIDH;  //Get upper 8 bits of ID
+        id <<= 3; // and shift over to make room for lower 3 bits
+        id |= RXB0SIDLbits.SID;  //get lower 3 bits
+        len = RXB0DLCbits.DLC;  //Get length - should be 2 since we're sending ints
+        data = RXB0D1; //high byte of data
+        data <<= 8;
+        data += RXB0D0; //low byte of data
+        update = 1;  //Set update so the main loop knows we have a new message
+        RXB0CONbits.RXFUL = 0;  //Clear the buffer - we're done with it
+        PIR5bits.RXB0IF = 0; //Clear the interrupt flag
     }
 }
