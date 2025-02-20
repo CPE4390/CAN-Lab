@@ -1,4 +1,4 @@
-# Lab6-CAN
+# CAN Lab Part 1
 CAN interface  
 Exploring basic configuration, messages and filters 
 
